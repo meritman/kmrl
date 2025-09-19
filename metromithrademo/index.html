@@ -189,6 +189,7 @@
     // --- Static Data ---
     const stationLocations = ["Aluva", "Kalamassery", "Maharajas College", "Vyttila", "Petta"]; const depotLocations = ["Muttom", "Thripunithura", "Kakkanad", "Petta", "Aluva Yard"];
     const recentActivities = { 'Managing Director': [ { text: "Reviewed 'Q2 Finance Report'", status: 'completed' }, { text: "Uploaded 'Safety Audit Report 2024'", status: 'completed' }, { text: "New message from Finance: 'Budget for Maintenance'", status: 'new' }, { text: "Pending approval for 'Vendor Invoice #456'", status: 'pending' }, ], 'default': [ { text: "Daily report generated successfully", status: 'completed' }, { text: "System health check passed", status: 'completed' }, { text: "New message: 'Weekly Safety Bulletin'", status: 'new' }, { text: "Pending review of shift rosters", status: 'pending' }, ] };
+    
     const classificationsByRole = {
         'Managing Director': [ 'Finance', 'Operations', 'Projects', 'IAR', 'Safety', 'Regulatory' ],
         'Director of Finance': [ 'Budgets', 'Invoices', 'Purchase Orders', 'Vendor Contracts' ],
@@ -197,7 +198,20 @@
         'Depot Manager': [ 'Rolling Stock Maintenance', 'Job Cards', 'Spare Parts Availability', 'Contractor Reports', 'Depot Safety Memos' ],
         'default': [ 'Request', 'Notification', 'Report', 'Alert', 'Unclassified' ]
     };
-    
+
+    // --- CORRECTED: Data structure to handle hierarchical filtering ---
+    const categoryExpansions = {
+        'Finance': classificationsByRole['Director of Finance'],
+        'Operations': classificationsByRole['Director of Operations'],
+        'Safety': [
+            'Safety Circulars',
+            'Incident Reports',
+            'Safety Updates',
+            'Incident Alerts',
+            'Depot Safety Memos'
+        ]
+    };
+
     // --- UI & Animation Helpers ---
     function showMessageBox(title, content) { messageBoxTitle.textContent = title; messageBoxContent.textContent = content; messageBox.classList.remove("hidden"); setTimeout(() => messageBox.classList.add('hidden'), 5000); }
     closeMessageBoxBtn.addEventListener("click", () => messageBox.classList.add("hidden"));
@@ -261,14 +275,39 @@
 
     // --- Message Display & Filtering ---
     const populateFilters = () => {
+        // Use the static, role-based list to populate the filter dropdown
         const relevantClassifications = classificationsByRole[currentUser.role] || classificationsByRole.default;
         tagFilter.innerHTML = '<option value="All">All Classifications</option>' + relevantClassifications.map(c => `<option value="${c}">${c}</option>`).join("");
+        
         const urgencies = [...new Set(currentMessages.map(msg => msg.ai_analysis?.urgency).filter(Boolean))];
         priorityFilter.innerHTML = '<option value="All">All Urgencies</option>' + urgencies.map(u => `<option value="${u}">${u}</option>`).join("");
     };
 
-    const applyFilters = () => { const searchTerm = searchInput.value.toLowerCase(); const selectedClass = tagFilter.value; const selectedUrgency = priorityFilter.value; const filtered = currentMessages.filter(msg => { const analysis = msg.ai_analysis; const email = msg.original_email; const searchMatch = (email.subject.toLowerCase().includes(searchTerm) || email.body.toLowerCase().includes(searchTerm) || (analysis && analysis.classification.toLowerCase().includes(searchTerm))); const classMatch = (selectedClass === "All" || (analysis && analysis.classification === selectedClass)); const urgencyMatch = (selectedUrgency === "All" || (analysis && analysis.urgency === selectedUrgency)); return searchMatch && classMatch && urgencyMatch; }); displayMessages(filtered); };
+    const applyFilters = () => {
+        const searchTerm = searchInput.value.toLowerCase();
+        const selectedClass = tagFilter.value;
+        const selectedUrgency = priorityFilter.value;
+        
+        // Expand the selected category to include its sub-categories for matching
+        const classesToMatch = categoryExpansions[selectedClass] ? [selectedClass, ...categoryExpansions[selectedClass]] : [selectedClass];
+
+        const filtered = currentMessages.filter(msg => {
+            const analysis = msg.ai_analysis;
+            const email = msg.original_email;
+            const searchMatch = (email.subject.toLowerCase().includes(searchTerm) || email.body.toLowerCase().includes(searchTerm) || (analysis && analysis.classification.toLowerCase().includes(searchTerm)));
+            
+            // Check if the message's classification is in the list of classes to match
+            const classMatch = (selectedClass === "All" || (analysis && analysis.classification && classesToMatch.includes(analysis.classification)));
+
+            const urgencyMatch = (selectedUrgency === "All" || (analysis && analysis.urgency === selectedUrgency));
+            
+            return searchMatch && classMatch && urgencyMatch;
+        });
+        displayMessages(filtered);
+    };
+    
     searchInput.addEventListener("input", applyFilters); tagFilter.addEventListener("change", applyFilters); priorityFilter.addEventListener("change", applyFilters);
+    
     const displayMessages = (messagesToDisplay) => { messagesContainer.innerHTML = ""; if (messagesToDisplay.length === 0) { messagesContainer.innerHTML = '<p class="text-center text-slate-500 col-span-full">No messages found.</p>'; return; } messagesToDisplay.forEach((msg, index) => { const card = document.createElement("div"); const analysis = msg.ai_analysis || {}; const email = msg.original_email; const urgencyColors = { High: "bg-red-500/80", Medium: "bg-yellow-500/80", Low: "bg-green-500/80" }; const urgencyBorder = { High: "border-red-500", Medium: "border-yellow-500", Low: "border-green-500" }; card.className = `bg-slate-800 border border-slate-700 rounded-xl p-6 cursor-pointer hover:bg-slate-700/50 transition-all duration-200 flex flex-col justify-between border-l-4 transform hover:-translate-y-1 animate-fade-in-up ${!msg.isRead ? (urgencyBorder[analysis.urgency] || 'border-indigo-500') : 'border-slate-700'}`; card.style.animationDelay = `${index * 50}ms`; card.innerHTML = `<div><div class="flex items-center justify-between mb-2"><span class="text-sm font-bold text-indigo-300">${analysis.classification || 'Unclassified'}</span><span class="text-xs font-semibold uppercase rounded-full px-2 py-1 text-white ${urgencyColors[analysis.urgency] || 'bg-slate-600'}">${analysis.urgency || 'N/A'}</span></div><h3 class="text-xl font-bold text-slate-100 truncate mb-1">${email.subject}</h3><p class="text-slate-400 text-sm truncate-3-lines leading-5">${analysis.details || email.body}</p></div>`; card.addEventListener("click", () => showFullMessage(msg)); messagesContainer.appendChild(card); }); };
     const showFullMessage = (msg) => { messageToForward = msg; modalTitle.textContent = msg.original_email.subject; modalContent.textContent = msg.original_email.body; const analysis = msg.ai_analysis || {}; modalClassification.textContent = analysis.classification || 'N/A'; modalUrgency.textContent = analysis.urgency || 'N/A'; modalAction.textContent = analysis.extracted_action || 'N/A'; const originalMessage = currentMessages.find(m => m._id === msg._id); if (originalMessage && !originalMessage.isRead) { originalMessage.isRead = true; applyFilters(); setupDashboardView(); } summaryEl.textContent = ""; fullMessageModal.classList.remove("hidden"); };
     closeModalBtn.addEventListener("click", () => fullMessageModal.classList.add("hidden"));

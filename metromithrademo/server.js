@@ -23,7 +23,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// --- GTFS Data Loading (No changes) ---
+// --- GTFS Data Loading ---
 let gtfsData = {};
 
 function loadGTFSData() {
@@ -50,7 +50,7 @@ function loadGTFSData() {
 }
 
 
-// --- MongoDB Connection (No changes) ---
+// --- MongoDB Connection ---
 let db;
 const client = new MongoClient(process.env.MONGO_URI);
 
@@ -69,26 +69,77 @@ async function connectToMongo() {
 loadGTFSData();
 connectToMongo();
 
-// --- Gemini AI Function (No changes) ---
+// --- MODIFIED Gemini AI Function with Validation ---
+const validClassifications = [
+    'Budgets', 'Invoices', 'Purchase Orders', 'Vendor Contracts',
+    'Maintenance Reports', 'Safety Circulars', 'Schedules', 'Incident Reports',
+    'Passenger Complaints', 'Shift Rosters', 'Safety Updates', 'Incident Alerts', 'Revenue Data',
+    'Rolling Stock Maintenance', 'Job Cards', 'Spare Parts Availability', 'Contractor Reports', 'Depot Safety Memos',
+    'Projects', 'IAR', 'Regulatory', 'General Correspondence' // Added a fallback tag
+];
+
 async function processEmailWithAI(email) {
     const GEMINI_API_KEY = "AIzaSyBaSJz-8Ma99Whgh7OcqBAuWx9AlysEsoU";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
-    const prompt = `Analyze the following email content. Classify it, extract key entities, and suggest the primary role(s) for action. Respond ONLY with a valid JSON object using the specified schema. Schema: {"classification": "String", "urgency": "String ('Low', 'Medium', 'High')", "location": "String", "details": "String", "extracted_action": "String", "suggested_action_roles": "Array of strings"}. Email Subject: "${email.subject}" Email Body: """${email.body}"""`;
+    
+    const classificationList = validClassifications.join(', ');
+
+    const prompt = `
+    Analyze the following email. Your primary task is to classify it by choosing the SINGLE most appropriate category from the following allowed list: [${classificationList}].
+
+    You must follow these rules strictly:
+    1.  Choose only ONE category from the list.
+    2.  Do not invent a new category or combine categories.
+    3.  If the email is a clear invoice, the classification MUST be "Invoices". If it's about a safety rule, it MUST be "Safety Circulars" or "Safety Updates". If it doesn't fit any category, use "General Correspondence".
+
+    Respond ONLY with a valid JSON object using this exact schema:
+    {"classification": "String (must be one from the provided list)", "urgency": "String ('Low', 'Medium', 'High')", "location": "String", "details": "String", "extracted_action": "String", "suggested_action_roles": "Array of strings"}
+
+    Email Subject: "${email.subject}"
+    Email Body: """${email.body}"""`;
+    
     try {
         const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
         if (!response.ok) { const errorBody = await response.json(); throw new Error(`Gemini API Error: ${errorBody.error.message}`); }
         const result = await response.json();
         const rawJsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!rawJsonText) throw new Error("No content from Gemini.");
+        
         const cleanedJsonText = rawJsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-        return JSON.parse(cleanedJsonText);
+        const aiResponse = JSON.parse(cleanedJsonText);
+
+        // --- NEW VALIDATION AND CORRECTION LOGIC ---
+        let finalClassification = "General Correspondence"; // Default fallback tag
+
+        if (aiResponse.classification) {
+            const aiClassificationLower = aiResponse.classification.toLowerCase();
+            
+            // 1. Check for an exact match (case-insensitive)
+            const exactMatch = validClassifications.find(tag => tag.toLowerCase() === aiClassificationLower);
+            
+            if (exactMatch) {
+                finalClassification = exactMatch; // Use the canonical casing
+            } else {
+                // 2. If no exact match, find a valid tag contained within the AI's output string
+                const partialMatch = validClassifications.find(tag => aiClassificationLower.includes(tag.toLowerCase()));
+                if (partialMatch) {
+                    finalClassification = partialMatch; // Correct it to the canonical tag
+                }
+            }
+        }
+
+        // 3. Overwrite the AI's classification with our validated/corrected one
+        aiResponse.classification = finalClassification;
+        
+        return aiResponse;
+
     } catch (error) { console.error('[ERROR] Failed to process email with AI:', error); return null; }
 }
 
 
 // --- API Endpoints ---
 
-// --- NEW Token-Based Authentication ---
+// --- Token-Based Authentication ---
 app.post('/api/token-login', (req, res) => {
     const { token } = req.body;
     if (!token) {
@@ -98,12 +149,11 @@ app.post('/api/token-login', (req, res) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
         
-        // The user object is now constructed directly from the token payload
         const user = {
             name: decoded.name,
             role: decoded.role,
-            roleType: decoded.category, // Mapping 'category' from token to 'roleType'
-            location: null // Location is not in the token, can be adapted if needed
+            roleType: decoded.category,
+            location: null
         };
 
         res.status(200).json({ message: 'Login successful!', user });
@@ -120,7 +170,7 @@ app.post('/api/token-login', (req, res) => {
     }
 });
 
-// --- NEW Endpoint to Request a New Token ---
+// --- Endpoint to Request a New Token ---
 app.post('/api/request-new-token', async (req, res) => {
     const { email } = req.body;
     if (!email) {
@@ -131,7 +181,6 @@ app.post('/api/request-new-token', async (req, res) => {
         apiKey: process.env.MAILERSEND_API_KEY,
     });
 
-    // IMPORTANT: Change these email addresses
     const sentFrom = new Sender("your-verified-from-email@yourdomain.com", "Metro Mithra System");
     const recipients = [
         new Recipient("admin-email-to-receive-requests@example.com", "System Admin")
@@ -158,15 +207,15 @@ app.post('/api/request-new-token', async (req, res) => {
 });
 
 
-// Tasks endpoint (No changes)
+// Tasks endpoint
 app.get('/api/tasks', async (req, res) => { const { role } = req.query; if (!role) { return res.status(400).json({ message: 'Role query parameter is required.' }); } try { const tasksCollection = db.collection('tasks'); const userTasks = await tasksCollection.find({ assigned_to_role: role }).sort({ createdAt: -1 }).toArray(); res.status(200).json(userTasks); } catch (error) { console.error('[ERROR] Failed to fetch tasks:', error); res.status(500).json({ message: 'Server error while fetching tasks.' }); } });
 
-// Email fetching and processing (No changes)
+// Email fetching and processing
 function getRawEmailsFromImap() { return new Promise((resolve, reject) => { const imap = new Imap({ user: process.env.IMAP_USER, password: process.env.IMAP_PASSWORD, host: 'imap.gmail.com', port: 993, tls: true, tlsOptions: { rejectUnauthorized: false } }); imap.once('ready', () => { imap.openBox('INBOX', true, (err, box) => { if (err) return reject(err); imap.search(['ALL'], (err, results) => { if (err || !results || results.length === 0) { imap.end(); return resolve([]); } const fetch = imap.fetch(results, { bodies: '' }); const messagePromises = []; fetch.on('message', (msg) => { const messagePromise = new Promise((resolveMsg) => { msg.on('body', (stream) => { simpleParser(stream, (err, parsed) => { if (err) return resolveMsg(null); resolveMsg({ from: parsed.from ? parsed.from.text : 'Unknown', subject: parsed.subject || 'No Subject', body: parsed.text || 'No Body', date: parsed.date || new Date(), }); }); }); }); messagePromises.push(messagePromise); }); fetch.once('error', reject); fetch.once('end', () => { Promise.all(messagePromises).then(emails => { imap.end(); resolve(emails.filter(e => e !== null)); }).catch(reject); }); }); }); }); imap.once('error', reject); imap.connect(); }); }
 app.get('/api/emails', async (req, res) => { try { const rawEmails = await getRawEmailsFromImap(); const documentsCollection = db.collection('processed_documents'); const tasksCollection = db.collection('tasks'); for (const email of rawEmails) { const existingDoc = await documentsCollection.findOne({ "original_email.subject": email.subject, "original_email.date": email.date }); if (existingDoc) { continue; } const aiData = await processEmailWithAI(email); if (aiData) { const newDocument = { original_email: email, ai_analysis: aiData, createdAt: new Date() }; const insertResult = await documentsCollection.insertOne(newDocument); const newDocId = insertResult.insertedId; if (aiData.suggested_action_roles && aiData.suggested_action_roles.length > 0) { for (const role of aiData.suggested_action_roles) { const newTask = { assigned_to_role: role, title: aiData.classification || email.subject, description: aiData.extracted_action || aiData.details, status: "Pending", source_document_id: newDocId, createdAt: new Date() }; await tasksCollection.insertOne(newTask); } } } } const allProcessedDocs = await documentsCollection.find().sort({ createdAt: -1 }).toArray(); res.json(allProcessedDocs); } catch (error) { console.error("[ERROR] API Error in /api/emails:", error.message); res.status(500).json({ error: 'Failed to fetch and process emails.' }); } });
 
 
-// --- Live Metro Status Endpoint (No changes) ---
+// --- Live Metro Status Endpoint ---
 app.get('/api/live-status', (req, res) => {
     try {
         const now = new Date();
@@ -255,7 +304,6 @@ app.get('/api/live-status', (req, res) => {
 
 
 // --- Server Start ---
-// Use the port provided by the hosting environment, or 3000 for local development
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
