@@ -184,8 +184,7 @@
     
     // --- State Variables ---
     let currentUser = null; let currentMessages = []; let currentUserTasks = []; let liveTrainData = []; let messageToForward = null; let initializedCharts = {}; let dataRefreshInterval = null; let selectedRoleDetails = {};
-    const GEMINI_API_KEY = "AIzaSyBaSJz-8Ma99Whgh7OcqBAuWx9AlysEsoU";
-
+    
     // --- Static Data ---
     const stationLocations = ["Aluva", "Kalamassery", "Maharajas College", "Vyttila", "Petta"]; const depotLocations = ["Muttom", "Thripunithura", "Kakkanad", "Petta", "Aluva Yard"];
     const recentActivities = { 'Managing Director': [ { text: "Reviewed 'Q2 Finance Report'", status: 'completed' }, { text: "Uploaded 'Safety Audit Report 2024'", status: 'completed' }, { text: "New message from Finance: 'Budget for Maintenance'", status: 'new' }, { text: "Pending approval for 'Vendor Invoice #456'", status: 'pending' }, ], 'default': [ { text: "Daily report generated successfully", status: 'completed' }, { text: "System health check passed", status: 'completed' }, { text: "New message: 'Weekly Safety Bulletin'", status: 'new' }, { text: "Pending review of shift rosters", status: 'pending' }, ] };
@@ -199,7 +198,7 @@
         'default': [ 'Request', 'Notification', 'Report', 'Alert', 'Unclassified' ]
     };
 
-    // --- CORRECTED: Data structure to handle hierarchical filtering ---
+    // --- Data structure to handle hierarchical filtering ---
     const categoryExpansions = {
         'Finance': classificationsByRole['Director of Finance'],
         'Operations': classificationsByRole['Director of Operations'],
@@ -225,13 +224,7 @@
     
     demoLoginBtn.addEventListener("click", async () => {
         loadingOverlay.classList.remove('hidden');
-        // Create a mock user object
-        const demoUser = {
-            name: "Steve",
-            role: selectedRoleDetails.role,
-            roleType: selectedRoleDetails.roleType,
-            location: selectedRoleDetails.location || null
-        };
+        const demoUser = { name: "Steve", role: selectedRoleDetails.role, roleType: selectedRoleDetails.roleType, location: selectedRoleDetails.location || null };
         localStorage.setItem('kmrlUser', JSON.stringify(demoUser));
         await setupAppForUser(demoUser);
     });
@@ -260,7 +253,6 @@
       liveTrainData = []; 
       dashboardScreen.classList.add("hidden"); 
       loginScreen.classList.remove("hidden"); 
-      // Reset to the beginning of the login flow
       authStep.classList.add("hidden"); 
       roleSelectionStep.classList.remove("hidden"); 
       roleTypeSelect.value = ""; 
@@ -275,10 +267,8 @@
 
     // --- Message Display & Filtering ---
     const populateFilters = () => {
-        // Use the static, role-based list to populate the filter dropdown
         const relevantClassifications = classificationsByRole[currentUser.role] || classificationsByRole.default;
         tagFilter.innerHTML = '<option value="All">All Classifications</option>' + relevantClassifications.map(c => `<option value="${c}">${c}</option>`).join("");
-        
         const urgencies = [...new Set(currentMessages.map(msg => msg.ai_analysis?.urgency).filter(Boolean))];
         priorityFilter.innerHTML = '<option value="All">All Urgencies</option>' + urgencies.map(u => `<option value="${u}">${u}</option>`).join("");
     };
@@ -288,16 +278,14 @@
         const selectedClass = tagFilter.value;
         const selectedUrgency = priorityFilter.value;
         
-        // Expand the selected category to include its sub-categories for matching
         const classesToMatch = categoryExpansions[selectedClass] ? [selectedClass, ...categoryExpansions[selectedClass]] : [selectedClass];
 
         const filtered = currentMessages.filter(msg => {
             const analysis = msg.ai_analysis;
             const email = msg.original_email;
-            const searchMatch = (email.subject.toLowerCase().includes(searchTerm) || email.body.toLowerCase().includes(searchTerm) || (analysis && analysis.classification.toLowerCase().includes(searchTerm)));
+            const searchMatch = (email.subject.toLowerCase().includes(searchTerm) || email.body.toLowerCase().includes(searchTerm) || (analysis && Array.isArray(analysis.classification) && analysis.classification.join(' ').toLowerCase().includes(searchTerm)));
             
-            // Check if the message's classification is in the list of classes to match
-            const classMatch = (selectedClass === "All" || (analysis && analysis.classification && classesToMatch.includes(analysis.classification)));
+            const classMatch = (selectedClass === "All" || (analysis && Array.isArray(analysis.classification) && analysis.classification.some(tag => classesToMatch.includes(tag))));
 
             const urgencyMatch = (selectedUrgency === "All" || (analysis && analysis.urgency === selectedUrgency));
             
@@ -308,43 +296,86 @@
     
     searchInput.addEventListener("input", applyFilters); tagFilter.addEventListener("change", applyFilters); priorityFilter.addEventListener("change", applyFilters);
     
-    const displayMessages = (messagesToDisplay) => { messagesContainer.innerHTML = ""; if (messagesToDisplay.length === 0) { messagesContainer.innerHTML = '<p class="text-center text-slate-500 col-span-full">No messages found.</p>'; return; } messagesToDisplay.forEach((msg, index) => { const card = document.createElement("div"); const analysis = msg.ai_analysis || {}; const email = msg.original_email; const urgencyColors = { High: "bg-red-500/80", Medium: "bg-yellow-500/80", Low: "bg-green-500/80" }; const urgencyBorder = { High: "border-red-500", Medium: "border-yellow-500", Low: "border-green-500" }; card.className = `bg-slate-800 border border-slate-700 rounded-xl p-6 cursor-pointer hover:bg-slate-700/50 transition-all duration-200 flex flex-col justify-between border-l-4 transform hover:-translate-y-1 animate-fade-in-up ${!msg.isRead ? (urgencyBorder[analysis.urgency] || 'border-indigo-500') : 'border-slate-700'}`; card.style.animationDelay = `${index * 50}ms`; card.innerHTML = `<div><div class="flex items-center justify-between mb-2"><span class="text-sm font-bold text-indigo-300">${analysis.classification || 'Unclassified'}</span><span class="text-xs font-semibold uppercase rounded-full px-2 py-1 text-white ${urgencyColors[analysis.urgency] || 'bg-slate-600'}">${analysis.urgency || 'N/A'}</span></div><h3 class="text-xl font-bold text-slate-100 truncate mb-1">${email.subject}</h3><p class="text-slate-400 text-sm truncate-3-lines leading-5">${analysis.details || email.body}</p></div>`; card.addEventListener("click", () => showFullMessage(msg)); messagesContainer.appendChild(card); }); };
-    const showFullMessage = (msg) => { messageToForward = msg; modalTitle.textContent = msg.original_email.subject; modalContent.textContent = msg.original_email.body; const analysis = msg.ai_analysis || {}; modalClassification.textContent = analysis.classification || 'N/A'; modalUrgency.textContent = analysis.urgency || 'N/A'; modalAction.textContent = analysis.extracted_action || 'N/A'; const originalMessage = currentMessages.find(m => m._id === msg._id); if (originalMessage && !originalMessage.isRead) { originalMessage.isRead = true; applyFilters(); setupDashboardView(); } summaryEl.textContent = ""; fullMessageModal.classList.remove("hidden"); };
+    const displayMessages = (messagesToDisplay) => {
+        messagesContainer.innerHTML = "";
+        if (messagesToDisplay.length === 0) {
+            messagesContainer.innerHTML = '<p class="text-center text-slate-500 col-span-full">No messages found.</p>';
+            return;
+        }
+        messagesToDisplay.forEach((msg, index) => {
+            const card = document.createElement("div");
+            const analysis = msg.ai_analysis || {};
+            const email = msg.original_email;
+            const urgencyColors = { High: "bg-red-500/80", Medium: "bg-yellow-500/80", Low: "bg-green-500/80" };
+            const urgencyBorder = { High: "border-red-500", Medium: "border-yellow-500", Low: "border-green-500" };
+
+            // FIXED for multi-label: Check for non-empty array before creating tags
+            let classificationHTML = '<div class="flex flex-wrap gap-2"><span class="text-xs font-bold text-gray-400 bg-gray-500/10 px-2 py-1 rounded-md">Unclassified</span></div>';
+            if (analysis.classification && Array.isArray(analysis.classification) && analysis.classification.length > 0) {
+                classificationHTML = '<div class="flex flex-wrap gap-2">' + analysis.classification.map(tag => `<span class="text-xs font-bold text-indigo-300 bg-indigo-500/10 px-2 py-1 rounded-md">${tag}</span>`).join('') + '</div>';
+            }
+
+            card.className = `bg-slate-800 border border-slate-700 rounded-xl p-6 cursor-pointer hover:bg-slate-700/50 transition-all duration-200 flex flex-col justify-between border-l-4 transform hover:-translate-y-1 animate-fade-in-up ${!msg.isRead ? (urgencyBorder[analysis.urgency] || 'border-indigo-500') : 'border-slate-700'}`;
+            card.style.animationDelay = `${index * 50}ms`;
+            card.innerHTML = `
+                <div>
+                    <div class="flex items-start justify-between mb-2">
+                        ${classificationHTML}
+                        <span class="text-xs font-semibold uppercase rounded-full px-2 py-1 text-white ${urgencyColors[analysis.urgency] || 'bg-slate-600'} flex-shrink-0 ml-2">${analysis.urgency || 'N/A'}</span>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-100 truncate mt-3 mb-1">${email.subject}</h3>
+                    <p class="text-slate-400 text-sm truncate-3-lines leading-5">${analysis.details || email.body}</p>
+                </div>`;
+            card.addEventListener("click", () => showFullMessage(msg));
+            messagesContainer.appendChild(card);
+        });
+    };
+
+    const showFullMessage = (msg) => {
+        messageToForward = msg;
+        modalTitle.textContent = msg.original_email.subject;
+        modalContent.textContent = msg.original_email.body;
+        const analysis = msg.ai_analysis || {};
+
+        // FIXED for multi-label: Check for non-empty array in modal view
+        modalClassification.innerHTML = (Array.isArray(analysis.classification) && analysis.classification.length > 0) ? analysis.classification.join(', ') : 'N/A';
+
+        modalUrgency.textContent = analysis.urgency || 'N/A';
+        modalAction.textContent = analysis.extracted_action || 'N/A';
+        const originalMessage = currentMessages.find(m => m._id === msg._id);
+        if (originalMessage && !originalMessage.isRead) {
+            originalMessage.isRead = true;
+            applyFilters();
+            setupDashboardView();
+        }
+        summaryEl.textContent = "";
+        fullMessageModal.classList.remove("hidden");
+    };
     closeModalBtn.addEventListener("click", () => fullMessageModal.classList.add("hidden"));
 
     // --- Live Status Display ---
     function displayTrainStatus(trains) {
         if (!trainCardsContainer) return;
         trainCardsContainer.innerHTML = "";
-        if (trains.length === 0) {
-            trainCardsContainer.innerHTML = '<p class="text-center text-slate-500 col-span-full">No trains currently in service according to the schedule.</p>';
-            return;
-        }
+        if (trains.length === 0) { trainCardsContainer.innerHTML = '<p class="text-center text-slate-500 col-span-full">No trains currently in service.</p>'; return; }
         trains.forEach((train, index) => {
             const card = document.createElement("div");
             const statusColors = { "In Transit": "bg-blue-500/10 text-blue-300", "At Station": "bg-green-500/10 text-green-300"};
             card.className = "bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col space-y-4 animate-fade-in-up";
             card.style.animationDelay = `${index * 50}ms`;
-
             card.innerHTML = `
                 <div>
-                    <div class="flex justify-between items-center mb-2">
-                        <p class="font-bold text-lg text-slate-100">${train.tripId.replace(/_/g, ' ')}</p>
-                        <span class="text-xs font-semibold px-2 py-1 rounded-full ${statusColors[train.status] || 'bg-gray-500/10 text-gray-300'}">${train.status}</span>
-                    </div>
+                    <div class="flex justify-between items-center mb-2"><p class="font-bold text-lg text-slate-100">${train.tripId.replace(/_/g, ' ')}</p><span class="text-xs font-semibold px-2 py-1 rounded-full ${statusColors[train.status] || 'bg-gray-500/10 text-gray-300'}">${train.status}</span></div>
                     <p class="text-sm text-indigo-400">${train.direction}</p>
                 </div>
-                
                 <div class="flex-1 space-y-2">
                     <div class="flex items-center text-sm"><i data-lucide="arrow-up-right" class="w-4 h-4 mr-2 text-slate-500"></i><span class="text-slate-400">Last Dept:</span><span class="font-semibold ml-2 text-slate-200">${train.lastStation.name}</span><span class="ml-auto text-xs text-slate-500">${train.lastStation.time || ''}</span></div>
                     <div class="flex items-center text-sm"><i data-lucide="arrow-down-right" class="w-4 h-4 mr-2 text-slate-500"></i><span class="text-slate-400">Next ETA:</span><span class="font-bold ml-2 text-green-400">${train.nextStation.name}</span><span class="ml-auto text-xs font-bold text-green-400">${train.nextStation.time || ''}</span></div>
                 </div>
-
                 <div>
                     <div class="w-full bg-slate-700 rounded-full h-2.5"><div class="bg-indigo-500 h-2.5 rounded-full" style="width: ${train.progress}%"></div></div>
                     <p class="text-xs text-right mt-1 text-slate-500">${train.totalStops} stops</p>
-                </div>
-            `;
+                </div>`;
             trainCardsContainer.appendChild(card);
         });
         lucide.createIcons();
@@ -354,13 +385,26 @@
     async function fetchEmailsFromAPI() { try { const response = await fetch('https://metromithra-server.onrender.com/api/emails'); if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`); const processedDocs = await response.json(); return processedDocs.map(doc => ({ ...doc, isRead: false })); } catch (error) { console.error("Could not fetch emails:", error); showMessageBox("Connection Error", `Could not connect to the email server.`); return []; } }
     async function fetchTasksForUser(role) { try { const response = await fetch(`https://metromithra-server.onrender.com/api/tasks?role=${encodeURIComponent(role)}`); if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`); return await response.json(); } catch (error) { console.error("Could not fetch tasks:", error); showMessageBox("Connection Error", `Could not fetch your tasks.`); return []; } }
     async function fetchLiveStatus() { try { const response = await fetch('https://metromithra-server.onrender.com/api/live-status'); if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`); return await response.json(); } catch (error) { console.error("Could not fetch live status:", error); showMessageBox("Connection Error", `Could not fetch live train status.`); return []; } }
-    async function refreshData() { if (!currentUser) return; console.log('Refreshing data...'); const [newMessages, newTasks, newTrainData] = await Promise.all([ fetchEmailsFromAPI(), fetchTasksForUser(currentUser.role), fetchLiveStatus() ]); if (newMessages.length !== currentMessages.length || newTasks.length !== currentUserTasks.length || JSON.stringify(newTrainData) !== JSON.stringify(liveTrainData)) { showMessageBox('Data Updated', 'New messages, tasks, or train statuses have been loaded.'); currentMessages = newMessages; currentUserTasks = newTasks; liveTrainData = newTrainData; applyFilters(); setupDashboardView(); displayTrainStatus(liveTrainData);} }
+    async function refreshData() { if (!currentUser) return; console.log('Refreshing data...'); const [newMessages, newTasks, newTrainData] = await Promise.all([ fetchEmailsFromAPI(), fetchTasksForUser(currentUser.role), fetchLiveStatus() ]); if (newMessages.length !== currentMessages.length || newTasks.length !== currentUserTasks.length || JSON.stringify(newTrainData) !== JSON.stringify(liveTrainData)) { showMessageBox('Data Updated', 'New data has been loaded.'); currentMessages = newMessages; currentUserTasks = newTasks; liveTrainData = newTrainData; applyFilters(); setupDashboardView(); displayTrainStatus(liveTrainData);} }
 
     function showView(viewId) { mainViews.forEach(view => view.classList.add('hidden')); const activeView = document.getElementById(viewId); activeView.classList.remove('hidden'); animateChildren(activeView); sideMenuLinks.forEach(link => link.classList.toggle('bg-slate-700', link.dataset.view === viewId)); if (viewId === 'analytics-view') initAnalyticsCharts(); if (viewId.endsWith('-view') && !['dashboard-view', 'messages-view', 'analytics-view'].includes(viewId)) { initProblemSolverChart(viewId); } }
     sideMenuLinks.forEach(link => { link.addEventListener('click', (e) => { e.preventDefault(); showView(e.currentTarget.dataset.view); }); });
     
     // --- AI & Forwarding ---
-    async function summarizeWithAI(textToSummarize) { summaryEl.textContent = "Generating summary..."; const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`; const payload = { contents: [{ parts: [{ text: `Summarize the following email text in three brief, clear bullet points:\n\n---\n\n${textToSummarize}` }] }] }; try { const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!response.ok) { const errorBody = await response.json(); throw new Error(`API Error: ${errorBody.error.message}`); } const result = await response.json(); const summary = result.candidates?.[0]?.content?.parts?.[0]?.text; if (!summary) throw new Error("Could not extract summary from AI response."); summaryEl.textContent = summary; } catch (error) { summaryEl.textContent = `Error: ${error.message}`; } }
+    async function summarizeWithAI(textToSummarize) {
+        summaryEl.textContent = "Generating summary...";
+        try {
+            const response = await fetch('https://metromithra-server.onrender.com/api/summarize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: textToSummarize })
+            });
+            if (!response.ok) { const errorResult = await response.json(); throw new Error(errorResult.error || 'Server error'); }
+            const result = await response.json();
+            if (!result.summary) { throw new Error("Could not get summary from the server."); }
+            summaryEl.textContent = result.summary;
+        } catch (error) { summaryEl.textContent = `Error: ${error.message}`; }
+    }
     summarizeEmailBtn.addEventListener("click", () => summarizeWithAI(modalContent.textContent));
     forwardMessageBtn.addEventListener('click', () => { const allRoles = ['Station Controller', 'Depot Manager', 'Managing Director', 'Director of Finance', 'Director of Operations']; forwardRoleSelect.innerHTML = allRoles.filter(role => role !== currentUser.role).map(role => `<option value="${role}">${role}</option>`).join(''); forwardMessageModal.classList.remove('hidden'); });
     closeForwardModalBtn.addEventListener('click', () => forwardMessageModal.classList.add('hidden'));
